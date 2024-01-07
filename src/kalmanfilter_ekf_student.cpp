@@ -47,6 +47,31 @@ void KalmanFilter::handleLidarMeasurement(LidarMeasurement meas, const BeaconMap
         if (meas.id != -1 && map_beacon.id != -1)
         {           
             // The map matched beacon positions can be accessed using: map_beacon.x AND map_beacon.y
+            Vector2d z = Vector2d(); // z = measurement (in eigen matrix format)
+            Vector2d z_hat = Vector2d(); // z_hat = expected measurement based on current state estimate
+            Vector2d y = Vector2d(); // y = measurement innovation
+            MatrixXd H = MatrixXd(2,4); // H = measurement jacobian matrix
+            MatrixXd R = Matrix2d(); // R = measurment covariance matrix
+            MatrixXd S = Matrix2d(); // S = inovvation covariance matrix
+            MatrixXd K = MatrixXd(4,2); // K = kalman filter gain matrix
+
+            double dx_hat = map_beacon.x - state(0);
+            double dy_hat = map_beacon.y - state(1);
+            double z_hat_rng = sqrt(dx_hat*dx_hat + dy_hat*dy_hat);
+            double z_hat_ang = wrapAngle(atan2(dy_hat,dx_hat)-state(2));
+            z << meas.range,meas.theta;
+            z_hat << z_hat_rng, z_hat_ang;
+            y = z - z_hat;
+            y(1) = wrapAngle(y(1));
+            H << -dx_hat/z_hat_rng,-dy_hat/z_hat_rng,0,0, dy_hat/(z_hat_rng*z_hat_rng),-dx_hat/(z_hat_rng*z_hat_rng),-1,0;
+            R << LIDAR_RANGE_STD*LIDAR_RANGE_STD,0, 0,LIDAR_THETA_STD*LIDAR_THETA_STD;
+            S = H*cov*H.transpose() + R;
+            K = cov*H.transpose()*S.inverse();
+
+            state = state + K*y;
+            state(2) = wrapAngle(state(2));
+            cov = (Matrix4d::Identity() - K*H)*cov;
+
         }
 
         // ----------------------------------------------------------------------- //
@@ -72,7 +97,20 @@ void KalmanFilter::predictionStep(GyroMeasurement gyro, double dt)
         // values within correct range, otherwise strange angle effects might be seen.
         // ----------------------------------------------------------------------- //
         // ENTER YOUR CODE HERE
+        MatrixXd F = Matrix4d(); // F = Jacobian State matrix
+        MatrixXd Q = Matrix4d(); // Q = process noise
+        VectorXd delta_state = Vector4d();
+        double v = state(3);
+        double psi = state(2);
 
+        delta_state << dt*v*cos(psi), dt*v*sin(psi), dt*gyro.psi_dot, 0;
+        state = state + delta_state;
+        state(2) = wrapAngle(state(2));
+
+        F << 1,0,-dt*v*sin(psi),dt*cos(psi), 0,1,dt*v*cos(psi),dt*sin(psi), 0,0,1,0, 0,0,0,1;
+        Q << 0,0,0,0, 0,0,0,0, 0,0,dt*dt*GYRO_STD*GYRO_STD,0, 0,0,0,dt*dt*ACCEL_STD*ACCEL_STD;
+
+        cov = F*cov*F.transpose() + Q;
         // ----------------------------------------------------------------------- //
 
         setState(state);
