@@ -112,7 +112,7 @@ VectorXd lidarMeasurementModel(VectorXd augState, double beaconX, double beaconY
     double dx = beaconX - x;
     double dy = beaconY - y;
     double r = sqrt(dx*dx + dy*dy) + nuR;
-    double theta = wrapAngle(atan2(dy,dx) - psi + nuTheta);
+    double theta = atan2(dy,dx) - psi + nuTheta;
 
     z_hat << r,theta;
     // ----------------------------------------------------------------------- //
@@ -157,20 +157,65 @@ void KalmanFilter::handleLidarMeasurement(LidarMeasurement meas, const BeaconMap
         // map_beacon.x and map_beacon.y
         // ----------------------------------------------------------------------- //
         // ENTER YOUR CODE HERE
-        int numStates = state.size();
-        int numAugStates = numStates + 2;
         BeaconData map_beacon = map.getBeaconWithId(meas.id); // Match Beacon with built in Data Association Id
         if (meas.id != -1 && map_beacon.id != -1) // Check that we have a valid beacon match
         {
-            // generate augmented state & cov
+            int numStates = state.size();
+            int numMeas = 2;
+            int numNoise = numMeas;
+            int numAugStates = numStates + numNoise;
+            VectorXd z = VectorXd(numMeas);
+            z << meas.range, meas.theta;
 
-            // calculate innovation
+            // generate augmented state & cov
+            VectorXd augState = generateAugmentedState(state,numNoise);
+            std::vector<double> noiseVariances = {LIDAR_RANGE_STD*LIDAR_RANGE_STD, LIDAR_THETA_STD*LIDAR_THETA_STD};
+            MatrixXd augCov = generateAugmentedCovariance(cov,numNoise,noiseVariances);
+
+            // generate sigma points & weights
+            std::vector<double> sigmaWeights = generateSigmaWeights(numAugStates);
+            std::vector<VectorXd> sigmaPoints = generateSigmaPoints(augState,augCov);
+
+            // translate sigma points
+            std::vector<VectorXd> translatedSigmaPoints;
+            for (int i = 0; i < sigmaPoints.size(); i++) {
+                translatedSigmaPoints.push_back(lidarMeasurementModel(sigmaPoints[i],map_beacon.x,map_beacon.y));            
+            }
+
+            // calculate innovation and innovation covariance
+            VectorXd z_hat = VectorXd::Zero(numMeas); // expected measurement
+            VectorXd v = VectorXd::Zero(numMeas); // innovation
+            MatrixXd S = MatrixXd::Zero(numMeas,numMeas); // innovation covariance
+
+            for (int i = 0; i < sigmaWeights.size(); i++) {
+                z_hat += sigmaWeights[i]*translatedSigmaPoints[i];
+            }
+
+            v = normaliseLidarMeasurement(z - z_hat);
+
+            for (int i = 0; i < sigmaWeights.size(); i++) {
+                VectorXd measDiff = normaliseLidarMeasurement(translatedSigmaPoints[i] - z_hat);
+                S += sigmaWeights[i]*measDiff*measDiff.transpose();
+            }
+
+            // calculate cross-covariance
+            MatrixXd Pxz = MatrixXd(numStates,numMeas);
+            for (int i = 0; i < sigmaWeights.size(); i++) {
+                VectorXd unaugmentedSigmaPoint = sigmaPoints[i].head(numStates);
+                VectorXd stateDiff = normaliseState(unaugmentedSigmaPoint-state);
+                VectorXd measDiff = normaliseLidarMeasurement(translatedSigmaPoints[i]-z_hat);
+                Pxz += sigmaWeights[i]*stateDiff*measDiff.transpose();
+            }
 
             // calculate kalman gain matrix
+            MatrixXd K = MatrixXd(numStates,numMeas);
+            K = Pxz*S.inverse();
 
             // update state
+            state = normaliseState(state + K*v);
 
             // update covariance
+            cov = cov - K*S*K.transpose();
         }
         // ----------------------------------------------------------------------- //
 
@@ -204,15 +249,8 @@ void KalmanFilter::predictionStep(GyroMeasurement gyro, double dt)
         std::vector<double> noiseVariances = {GYRO_STD*GYRO_STD, ACCEL_STD*ACCEL_STD};
         MatrixXd augCov = generateAugmentedCovariance(cov,numNoise,noiseVariances);
 
-        std::vector<double> weights = generateSigmaWeights(numAugStates);
+        std::vector<double> sigmaWeights = generateSigmaWeights(numAugStates);
         std::vector<VectorXd> sigmaPoints = generateSigmaPoints(augState,augCov);
-
-        for (int i = 0; i < weights.size(); i++) {
-            std::cout << "sigma weight: ";
-            std::cout << weights[i] << std::endl;
-            std::cout << "point: " << std::endl;
-            std::cout << sigmaPoints[i] << std::endl;
-        }
 
         // translate sigma points
         std::vector<VectorXd> translatedSigmaPoints;
@@ -222,16 +260,16 @@ void KalmanFilter::predictionStep(GyroMeasurement gyro, double dt)
 
         // generate a priori state estimate
         state = VectorXd::Zero(numStates);
-        for (int i = 0; i < weights.size(); i++) {
-            state = state + weights[i]*translatedSigmaPoints[i];
+        for (int i = 0; i < sigmaWeights.size(); i++) {
+            state = state + sigmaWeights[i]*translatedSigmaPoints[i];
         }
         state = normaliseState(state);
 
         // generate a priori covariance matrix
         cov = MatrixXd::Zero(numStates,numStates);
-        for (int i = 0; i < weights.size(); i++) {
+        for (int i = 0; i < sigmaWeights.size(); i++) {
             VectorXd stateDiff = normaliseState(translatedSigmaPoints[i]-state);
-            cov = cov + weights[i]*stateDiff*stateDiff.transpose();
+            cov = cov + sigmaWeights[i]*stateDiff*stateDiff.transpose();
         }
 
 

@@ -52,7 +52,7 @@ void KalmanFilter::handleLidarMeasurement(LidarMeasurement meas, const BeaconMap
             Vector2d y = Vector2d(); // y = measurement innovation
             MatrixXd H = MatrixXd(2,4); // H = measurement jacobian matrix
             MatrixXd R = Matrix2d(); // R = measurment covariance matrix
-            MatrixXd S = Matrix2d(); // S = inovvation covariance matrix
+            MatrixXd S = Matrix2d(); // S = innovation covariance matrix
             MatrixXd K = MatrixXd(4,2); // K = kalman filter gain matrix
 
             double dx_hat = map_beacon.x - state(0);
