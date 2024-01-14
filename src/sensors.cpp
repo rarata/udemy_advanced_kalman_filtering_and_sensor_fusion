@@ -8,7 +8,7 @@ void GPSSensor::reset(){m_rand_gen = std::mt19937();}
 void GPSSensor::setGPSNoiseStd(double std){m_noise_std = std;}
 void GPSSensor::setGPSErrorProb(double prob){m_error_prob = prob;}
 void GPSSensor::setGPSDeniedZone(double x, double y, double r){m_gps_denied_x = x; m_gps_denied_y = y; m_gps_denied_range = r;}
-GPSMeasurement GPSSensor::generateGPSMeasurement(double sensor_x, double sensor_y)
+GPSMeasurement GPSSensor::generateGPSMeasurement(double sensor_x, double sensor_y, double measurement_time)
 {
     GPSMeasurement meas;
     std::normal_distribution<double> gps_pos_dis(0.0,m_noise_std);
@@ -20,6 +20,7 @@ GPSMeasurement GPSSensor::generateGPSMeasurement(double sensor_x, double sensor_
     double delta_y = sensor_y-m_gps_denied_y;
     double range = sqrt(delta_x*delta_x + delta_y*delta_y);
     if (range < m_gps_denied_range){meas.x = 0;meas.y = 0;}
+    meas.time = measurement_time;
     return meas;
 }
 
@@ -28,11 +29,12 @@ GyroSensor::GyroSensor():m_rand_gen(std::mt19937()),m_noise_std(0.0),m_bias(0.0)
 void GyroSensor::reset(){m_rand_gen = std::mt19937();}
 void GyroSensor::setGyroNoiseStd(double std){m_noise_std = std;}
 void GyroSensor::setGyroBias(double bias){m_bias = bias;}
-GyroMeasurement GyroSensor::generateGyroMeasurement(double sensor_yaw_rate)
+GyroMeasurement GyroSensor::generateGyroMeasurement(double sensor_yaw_rate, double measurement_time)
 {
     GyroMeasurement meas;
     std::normal_distribution<double> gyro_dis(0.0,m_noise_std);
     meas.psi_dot = sensor_yaw_rate + m_bias + gyro_dis(m_rand_gen);
+    meas.time = measurement_time;
     return meas;
 }
 
@@ -42,7 +44,7 @@ void LidarSensor::reset(){m_rand_gen = std::mt19937();}
 void LidarSensor::setLidarNoiseStd(double range_std, double theta_std){m_range_noise_std = range_std;m_theta_noise_std = theta_std;}
 void LidarSensor::setLidarMaxRange(double range){m_max_range = range;}
 void LidarSensor::setLidarDAEnabled(bool id_enabled){m_id_enabled = id_enabled;}
-std::vector<LidarMeasurement> LidarSensor::generateLidarMeasurements(double sensor_x, double sensor_y, double sensor_yaw, const BeaconMap& map)
+std::vector<LidarMeasurement> LidarSensor::generateLidarMeasurements(double sensor_x, double sensor_y, double sensor_yaw, const BeaconMap& map, double measurement_time)
 {
     std::vector<LidarMeasurement> meas;
     std::normal_distribution<double> lidar_theta_dis(0.0,m_theta_noise_std);
@@ -59,6 +61,7 @@ std::vector<LidarMeasurement> LidarSensor::generateLidarMeasurements(double sens
             beacon_meas.range = std::abs(beacon_range + lidar_range_dis(m_rand_gen));
             beacon_meas.theta = wrapAngle(theta + lidar_theta_dis(m_rand_gen));
             beacon_meas.id = (m_id_enabled ? beacon.id : -1);
+            beacon_meas.time = measurement_time;
             meas.push_back(beacon_meas);
         }
     }

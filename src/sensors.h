@@ -4,9 +4,9 @@
 #include <random>
 #include <vector>
 
-struct GPSMeasurement{double x,y;};
-struct GyroMeasurement{double psi_dot;};
-struct LidarMeasurement{double range, theta;int id;};
+struct GPSMeasurement{double x,y,time;};
+struct GyroMeasurement{double psi_dot,time;};
+struct LidarMeasurement{double range, theta, time;int id;};
 
 class BeaconMap;
 
@@ -19,7 +19,7 @@ class GPSSensor
         void setGPSNoiseStd(double std);
         void setGPSErrorProb(double prob);
         void setGPSDeniedZone(double x, double y, double r);
-        GPSMeasurement generateGPSMeasurement(double sensor_x, double sensor_y);
+        GPSMeasurement generateGPSMeasurement(double sensor_x, double sensor_y, double measurement_time);
 
     private:
 
@@ -38,7 +38,7 @@ class GyroSensor
         void reset();
         void setGyroNoiseStd(double std);
         void setGyroBias(double bias);
-        GyroMeasurement generateGyroMeasurement(double sensor_yaw_rate);
+        GyroMeasurement generateGyroMeasurement(double sensor_yaw_rate, double measurement_time);
 
     private:
 
@@ -56,7 +56,7 @@ class LidarSensor
         void setLidarNoiseStd(double range_std, double theta_std);
         void setLidarMaxRange(double range);
         void setLidarDAEnabled(bool id_enabled);
-        std::vector<LidarMeasurement> generateLidarMeasurements(double sensor_x, double sensor_y, double sensor_yaw, const BeaconMap& map);
+        std::vector<LidarMeasurement> generateLidarMeasurements(double sensor_x, double sensor_y, double sensor_yaw, const BeaconMap& map, double measurement_time);
 
     private:
 

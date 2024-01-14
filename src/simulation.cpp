@@ -85,7 +85,7 @@ void Simulation::update()
             {
                 if (m_time_till_gyro_measurement <= 0)
                 {
-                    GyroMeasurement meas = m_gyro_sensor.generateGyroMeasurement(m_car.getVehicleState().yaw_rate);
+                    GyroMeasurement meas = m_gyro_sensor.generateGyroMeasurement(m_car.getVehicleState().yaw_rate,m_time);
                     m_kalman_filter.predictionStep(meas, m_sim_parameters.time_step);
                     m_time_till_gyro_measurement += 1.0/m_sim_parameters.gyro_update_rate;
                 }
@@ -97,7 +97,7 @@ void Simulation::update()
             {
                 if (m_time_till_gps_measurement <= 0)
                 {
-                    GPSMeasurement gps_meas = m_gps_sensor.generateGPSMeasurement(m_car.getVehicleState().x,m_car.getVehicleState().y);
+                    GPSMeasurement gps_meas = m_gps_sensor.generateGPSMeasurement(m_car.getVehicleState().x,m_car.getVehicleState().y,m_time);
                     m_kalman_filter.handleGPSMeasurement(gps_meas);
                     m_gps_measurement_history.push_back(gps_meas);
                     m_time_till_gps_measurement += 1.0/m_sim_parameters.gps_update_rate;
@@ -110,7 +110,7 @@ void Simulation::update()
             {
                 if (m_time_till_lidar_measurement <= 0)
                 {
-                    std::vector<LidarMeasurement> lidar_measurements = m_lidar_sensor.generateLidarMeasurements(m_car.getVehicleState().x,m_car.getVehicleState().y, m_car.getVehicleState().psi, m_beacons);
+                    std::vector<LidarMeasurement> lidar_measurements = m_lidar_sensor.generateLidarMeasurements(m_car.getVehicleState().x,m_car.getVehicleState().y, m_car.getVehicleState().psi, m_beacons, m_time);
                     m_kalman_filter.handleLidarMeasurements(lidar_measurements, m_beacons);
                     m_lidar_measurement_history = lidar_measurements;
                     m_time_till_lidar_measurement += 1.0/m_sim_parameters.lidar_update_rate;
