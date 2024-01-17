@@ -26,7 +26,7 @@ void Simulation::reset()
     m_is_running = true;
     m_is_paused = false;
     
-    m_kalman_filter.reset();
+    m_kalman_filter.reset(m_sim_parameters.lidar_enabled);
 
     m_gps_sensor.reset();
     m_gps_sensor.setGPSNoiseStd(m_sim_parameters.gps_position_noise_std);
