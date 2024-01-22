@@ -55,12 +55,13 @@ class KalmanFilter : public KalmanFilterBase
         VehicleState getVehicleState();
         Matrix2d getVehicleStatePositionCovariance();
 
-        void attemptInitialization(const BeaconMap& map);
+        void initializeKalmanFilter(const BeaconMap& map);
         void predictionStep(double dt);
         void predictionStep(GyroMeasurement gyro, double dt);
+        double handleGPSMeasurement(GPSMeasurement meas);
         double handleLidarMeasurements(const std::vector<LidarMeasurement>& meas, const BeaconMap& map);
         double handleLidarMeasurement(LidarMeasurement meas, const BeaconMap& map);
-        double handleGPSMeasurement(GPSMeasurement meas);
+        VectorXd lidarMeasurementModel(VectorXd state, double beaconX, double beaconY);
 
 };
 
