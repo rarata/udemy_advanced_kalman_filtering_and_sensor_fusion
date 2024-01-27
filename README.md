@@ -2,6 +2,7 @@
 
 This repository contains my (Ryan Arata) work and exercises for the Udemy Advanced Kalman Filtering and Sensor Fusion class.
 My solutions to each exercise, when done, will go into the src/kalmanfilter_x_student.cpp files.
+
 The rest of this README is that provided with the starter repo.
 
 # Advanced Kalman Filtering and Sensor Fusion Simulation #

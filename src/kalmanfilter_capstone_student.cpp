@@ -15,7 +15,15 @@
 // Faulty GPS sensor measurements
 // Areas of the simulation are GPS-denied
 // Lidar beacon data association
-// Initialization of the kalman filter when there are no direct velocity measurements
+// Initialization of the kalman filter
+
+// Task list
+// 1. lidar data association
+// 2. initialization
+// 3. handle faultly GPS data
+// 4. handle gyro bias
+// 5. if necessary, handle gps-denied locations
+// 6. mess with consants to improve performance
 
 #include "kalmanfilter.h"
 #include "utils.h"
@@ -259,7 +267,7 @@ void KalmanFilter::initializeKalmanFilter(const BeaconMap& map) {
     double velocityRange = maxVelocity - minVelocity;
     minVelocity = minVelocity - velocityRange/2.0;
     maxVelocity = maxVelocity + velocityRange/2.0;
-    int nStep = 5; // explore 20 possible options for starting velocity within the possible range
+    int nStep = 20; // explore 20 possible options for starting velocity within the possible range
     double vStep = (maxVelocity-minVelocity) / (nStep - 1); // this vStep will also be used as the initial velocity std
 
     // run the kalman filter through the initialization measurements for each starting velocity option
