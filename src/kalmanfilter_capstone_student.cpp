@@ -35,16 +35,17 @@
 constexpr double ACCEL_STD = 1.0;
 constexpr double GYRO_STD = 0.01/180.0 * M_PI;
 constexpr double INIT_VEL_STD = 10.0;
-constexpr double INIT_PSI_STD = 90.0/180.0 * M_PI;
-constexpr double INIT_GYRO_BIAS_STD = 0.01/180.0 * M_PI;
+constexpr double INIT_PSI_STD = 45.0/180.0 * M_PI;
+constexpr double INIT_GYRO_BIAS_STD = 3/180.0 * M_PI;
 constexpr double GPS_POS_STD = 3.0;
-constexpr double LIDAR_RANGE_STD = 3.0;
+constexpr double LIDAR_RANGE_STD = 4.0;
 constexpr double LIDAR_THETA_STD = 0.02;
 constexpr double LIDAR_MAX_RANGE = 90.0;
+constexpr double GYRO_BIAS_STD = 0.005/180 * M_PI; // Gyro bias process model noise
 constexpr int NUM_STATE = 5; // x,y,psi,v,gyro_bias
-constexpr int MIN_INIT_SAMPLES = 3;
+constexpr int MIN_INIT_SAMPLES = 5;
 // -------------------------------------------------- //
-
+// --------------Helper functions-------------------- //
 double angleDelta(double theta1, double theta2) {
     // returns the delta between the angles in the range [-pi,pi)
     double delta = theta1 - theta2;
@@ -96,24 +97,6 @@ VectorXd normaliseLidarMeasurement(VectorXd meas) {
     return meas;
 }
 
-VectorXd lidarMeasurementModel(VectorXd state, double beaconX, double beaconY){
-    VectorXd z_hat = VectorXd::Zero(2);
-
-    double x = state(0);
-    double y = state(1);
-    double psi = state(2);
-
-    double dx = beaconX - x;
-    double dy = beaconY - y;
-    double r = sqrt(dx*dx + dy*dy);
-    double theta = atan2(dy,dx) - psi;
-
-    z_hat << r,theta;
-    // ----------------------------------------------------------------------- //
-
-    return z_hat;
-}
-
 double getLidarDistanceError(VectorXd state, LidarMeasurement meas, BeaconData beacon) {
     double x = state[0];
     double y = state[1];
@@ -160,8 +143,8 @@ double estimatePsiFromLidar(double x, double y, std::vector<LidarMeasurement> da
     // the lowest RMSE across the whole dataset mapping.
     double firstMeasRange = dataset[0].range;
     double firstMeasTheta = dataset[0].theta;
-    double potentialBeaconMinRange = firstMeasRange - 4*LIDAR_RANGE_STD;
-    double potentialBeaconMaxRange = firstMeasRange + 4*LIDAR_RANGE_STD;
+    double potentialBeaconMinRange = firstMeasRange - 3*LIDAR_RANGE_STD;
+    double potentialBeaconMaxRange = firstMeasRange + 3*LIDAR_RANGE_STD;
     std::vector<BeaconData> beacons = map.getBeaconsWithinRange(x, y, potentialBeaconMaxRange);
     std::vector<double> psiOptions;
 
@@ -177,20 +160,70 @@ double estimatePsiFromLidar(double x, double y, std::vector<LidarMeasurement> da
     double minRMSE = std::numeric_limits<double>::max();
     for (const double& psi : psiOptions) {
         double RMSE = 0;
-        VectorXd state = VectorXd(3);
-        state << x, y, psi;
+        VectorXd subState = VectorXd(3);
+        subState << x, y, psi;
         for (const LidarMeasurement& meas : dataset) {
-            int beaconID = associateBeaconID(state, meas, map);
+            int beaconID = associateBeaconID(subState, meas, map);
             BeaconData beacon = map.getBeaconWithId(beaconID);
-            RMSE += pow(getLidarDistanceError(state, meas, beacon),2);
+            RMSE += pow(getLidarDistanceError(subState, meas, beacon),2);
         }
-        bestPsi = (RMSE < minRMSE) ? psi : bestPsi;
+        if (RMSE < minRMSE) {
+            bestPsi = psi;
+            minRMSE = RMSE;
+        }
     }
 
     return bestPsi;
 }
 
-void KalmanFilter::attemptInitialization(const BeaconMap& map) {
+bool withinChiSq1PctThreshold(double normalizedInnovationSquared, int numMeasStates) {
+    double chiSquareThreshold;
+    if (numMeasStates == 1) {
+        chiSquareThreshold = 6.63;
+    } else if (numMeasStates == 2) {
+        chiSquareThreshold = 9.21;
+    } else if (numMeasStates == 3) {
+        chiSquareThreshold = 11.34;
+    } else if (numMeasStates == 4) {
+        chiSquareThreshold = 13.28;
+    } else if (numMeasStates == 5) {
+        chiSquareThreshold = 15.09;
+    } else {
+        std::cerr << "chiSquareTest1Pct only supports 1-5 measurement variables" << std::endl;
+        return false;
+    }
+    if (normalizedInnovationSquared > chiSquareThreshold) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
+bool withinChiSq5PctThreshold(double normalizedInnovationSquared, int numMeasStates) {
+    double chiSquareThreshold;
+    if (numMeasStates == 1) {
+        chiSquareThreshold = 3.84;
+    } else if (numMeasStates == 2) {
+        chiSquareThreshold = 5.99;
+    } else if (numMeasStates == 3) {
+        chiSquareThreshold = 7.81;
+    } else if (numMeasStates == 4) {
+        chiSquareThreshold = 9.49;
+    } else if (numMeasStates == 5) {
+        chiSquareThreshold = 11.07;
+    } else {
+        std::cerr << "chiSquareTest5Pct only supports 1-5 measurement variables" << std::endl;
+        return false;
+    }
+    if (normalizedInnovationSquared > chiSquareThreshold) {
+        return false;
+    } else {
+        return true;
+    }
+}
+// ----------------End helper functions ----------------------- //
+
+void KalmanFilter::initializeKalmanFilter(const BeaconMap& map) {
     // attempt to initialize the filter using this set of lidar measurements and all GPS measurements up to this point
 
     // Method:
@@ -216,6 +249,7 @@ void KalmanFilter::attemptInitialization(const BeaconMap& map) {
     // x0 and y0 from 1st gps measurement
     double x0 = gpsMeasurements[0].x;
     double y0 = gpsMeasurements[0].y;
+    double gyro_bias0 = 0; // Always assume any stochastic bias starts at 0
 
     // psi0 from 1st lidar measurement set
     double psi0 = estimatePsiFromLidar(x0, y0, lidarDatasets[0], map);
@@ -239,24 +273,24 @@ void KalmanFilter::attemptInitialization(const BeaconMap& map) {
     // run the kalman filter through the initialization measurements for each starting velocity option
     double minInnovationSq = std::numeric_limits<double>::max();
     double bestv0;
-    VectorXd bestState = Vector4d();
-    MatrixXd bestCov = Matrix4d();
+    VectorXd bestState = VectorXd(NUM_STATE);
+    MatrixXd bestCov = MatrixXd(NUM_STATE,NUM_STATE);
+
     for (int i = 0; i < nStep; i++) {
         double v0 = minVelocity + i*vStep;
         double thisInnovationSq = 0;
         
-        VectorXd state = Vector4d();
-        MatrixXd cov = Matrix4d::Zero();
-        state << x0, y0, psi0, v0;
+        VectorXd state = VectorXd(NUM_STATE);
+        MatrixXd cov = MatrixXd::Zero(NUM_STATE,NUM_STATE);
+        state << x0, y0, psi0, v0, gyro_bias0;
         cov(0,0) = GPS_POS_STD*GPS_POS_STD;
         cov(1,1) = cov(0,0);
         cov(2,2) = LIDAR_THETA_STD*LIDAR_THETA_STD;
         cov(3,3) = vStep*vStep;
+        cov(4,4) = INIT_GYRO_BIAS_STD*INIT_GYRO_BIAS_STD;
 
         setState(state);
         setCovariance(cov);
-
-        std::cout << state << std::endl;
 
         int iGyro = 1;
         int iGPS = 1;
@@ -274,13 +308,11 @@ void KalmanFilter::attemptInitialization(const BeaconMap& map) {
                 thisInnovationSq += handleLidarMeasurements(lidarDatasets[iLidar], map);
                 iLidar++;
                 nextLidarTime = (iLidar < nLidar) ? lidarDatasets[iLidar][0].time : std::numeric_limits<double>::max();
-                // std::cout << "lidar update" << std::endl;
             }
             else if (nextGPSTime < nextGyroTime) {
                 thisInnovationSq += handleGPSMeasurement(gpsMeasurements[iGPS]);
                 iGPS++;
                 nextGPSTime = (iGPS < nGPS) ? gpsMeasurements[iGPS].time : std::numeric_limits<double>::max();
-                // std::cout << "GPS update" << std::endl;
             }
             else {
                 double dt = gyroMeasurements[iGyro].time - gyroMeasurements[iGyro-1].time;
@@ -292,7 +324,6 @@ void KalmanFilter::attemptInitialization(const BeaconMap& map) {
         }
 
         if (thisInnovationSq < minInnovationSq) {
-            std::cout << thisInnovationSq << std::endl;
             minInnovationSq = thisInnovationSq;
             bestv0 = v0;
             bestState = getState();
@@ -304,18 +335,127 @@ void KalmanFilter::attemptInitialization(const BeaconMap& map) {
     setCovariance(bestCov);
 }
 
-double KalmanFilter::handleLidarMeasurements(const std::vector<LidarMeasurement>& dataset, const BeaconMap& map) {
-    if (isInitialised()) {
-        // Assume No Correlation between the Measurements and Update Sequentially
-        double vSqSum = 0;
-        for(const auto& meas : dataset) {vSqSum += handleLidarMeasurement(meas, map);}
-        return vSqSum;
+void KalmanFilter::predictionStep(GyroMeasurement gyro, double dt) {
+    if (isInitialised())
+    {
+        VectorXd state = getState();
+        MatrixXd cov = getCovariance();
+
+        // Implement The Kalman Filter Prediction Step for the system in the  
+        // section below.
+        // HINT: Assume the state vector has the form [PX, PY, PSI, V].
+        // HINT: Use the Gyroscope measurement as an input into the prediction step.
+        // HINT: You can use the constants: ACCEL_STD, GYRO_STD
+        // HINT: use the wrapAngle() function on angular values to always keep angle
+        // values within correct range, otherwise strange angle effects might be seen.
+        // ----------------------------------------------------------------------- //
+        // ENTER YOUR CODE HERE
+        MatrixXd F = MatrixXd(NUM_STATE,NUM_STATE); // F = Jacobian State matrix
+        MatrixXd Q = MatrixXd(NUM_STATE,NUM_STATE); // Q = process noise
+        VectorXd delta_state = VectorXd(NUM_STATE);
+        double v = state(3);
+        double psi = state(2);
+        double gyro_bias = state(4);
+
+        delta_state << dt*v*cos(psi), dt*v*sin(psi), dt*(gyro.psi_dot-gyro_bias), 0, 0;
+        state = state + delta_state;
+        state(2) = wrapAngle(state(2));
+
+        F << 1,0,-dt*v*sin(psi),dt*cos(psi),0,
+             0,1,dt*v*cos(psi),dt*sin(psi),0,
+            0,0,1,0,-dt, 
+            0,0,0,1,0,
+            0,0,0,0,1;
+        Q << 0,0,0,0,0, 
+             0,0,0,0,0, 
+             0,0,dt*dt*GYRO_STD*GYRO_STD,0,0, 
+             0,0,0,dt*dt*ACCEL_STD*ACCEL_STD,0, 
+             0,0,0,0,dt*dt*GYRO_BIAS_STD*GYRO_BIAS_STD;
+
+        cov = F*cov*F.transpose() + Q;
+        // ----------------------------------------------------------------------- //
+
+        setState(state);
+        setCovariance(cov);
+    }
+    else 
+    {
+        addGyroInitializationMeasurement(gyro);
+    }
+}
+
+double KalmanFilter::handleGPSMeasurement(GPSMeasurement meas) {
+    if(isInitialised())
+    {
+        VectorXd state = getState();
+        MatrixXd cov = getCovariance();
+
+        VectorXd z = Vector2d::Zero();
+        MatrixXd H = MatrixXd(2,5);
+        MatrixXd R = Matrix2d::Zero();
+
+        z << meas.x,meas.y;
+        H << 1,0,0,0,0, 
+             0,1,0,0,0;
+        R(0,0) = GPS_POS_STD*GPS_POS_STD;
+        R(1,1) = GPS_POS_STD*GPS_POS_STD;
+
+        VectorXd z_hat = H * state;
+        VectorXd v = z - z_hat;
+        MatrixXd S = H * cov * H.transpose() + R;
+        MatrixXd K = cov*H.transpose()*S.inverse();
+
+        state = state + K*v;
+        cov = (MatrixXd::Identity(NUM_STATE,NUM_STATE) - K*H) * cov;
+
+        double nis = v.transpose()*S.inverse()*v;
+
+        if (withinChiSq1PctThreshold(nis, v.size())) {
+            // valid measurement
+            setState(state);
+            setCovariance(cov);
+            return nis;
+        }
+        return nis;
     }
     else
     {
-        std::cout << "not initialized" << std::endl;
+        if (isLidarEnabled()) {
+            addGPSInitializationMeasurement(meas);
+        }
+        else
+        {
+            // No complex initialization for gps-only case; just set the position, assume zero velocity and psi, and start the filter
+            VectorXd state = VectorXd::Zero(NUM_STATE);
+            MatrixXd cov = MatrixXd::Zero(NUM_STATE,NUM_STATE);
+
+            state(0) = meas.x;
+            state(1) = meas.y;
+            cov(0,0) = GPS_POS_STD*GPS_POS_STD;
+            cov(1,1) = GPS_POS_STD*GPS_POS_STD;
+            cov(2,2) = INIT_PSI_STD*INIT_PSI_STD;
+            cov(3,3) = INIT_VEL_STD*INIT_VEL_STD;
+            cov(4,4) = INIT_GYRO_BIAS_STD*INIT_GYRO_BIAS_STD;
+
+            setState(state);
+            setCovariance(cov);
+        }
+        return 0;
+    } 
+             
+}
+
+double KalmanFilter::handleLidarMeasurements(const std::vector<LidarMeasurement>& dataset, const BeaconMap& map) {
+    if (isInitialised()) {
+        // Assume No Correlation between the Measurements and Update Sequentially
+        double nisSum = 0;
+        for(const auto& meas : dataset) {nisSum += handleLidarMeasurement(meas, map);}
+        return nisSum;
+    }
+    else
+    {
         addLidarInitializationDatasets(dataset);
-        attemptInitialization(map);
+        initializeKalmanFilter(map);
         return 0;
     }
     
@@ -340,17 +480,17 @@ double KalmanFilter::handleLidarMeasurement(LidarMeasurement meas, const BeaconM
         // ENTER YOUR CODE HERE
 
         BeaconData map_beacon = map.getBeaconWithId(meas.id); // Match Beacon with built in Data Association Id
-        double vSq = 1000; // arbitrarily high innovation squared (in case measurement doesn't have id)
+        double nis = 1000; // arbitrarily high innovation squared (in case measurement doesn't have id)
         if (meas.id != -1 && map_beacon.id != -1)
         {           
             // The map matched beacon positions can be accessed using: map_beacon.x AND map_beacon.y
             Vector2d z = Vector2d(); // z = measurement (in eigen matrix format)
             Vector2d z_hat = Vector2d(); // z_hat = expected measurement based on current state estimate
             Vector2d v = Vector2d(); // v = measurement innovation
-            MatrixXd H = MatrixXd(2,4); // H = measurement jacobian matrix
+            MatrixXd H = MatrixXd(2,NUM_STATE); // H = measurement jacobian matrix
             MatrixXd R = Matrix2d(); // R = measurment covariance matrix
             MatrixXd S = Matrix2d(); // S = innovation covariance matrix
-            MatrixXd K = MatrixXd(4,2); // K = kalman filter gain matrix
+            MatrixXd K = MatrixXd(NUM_STATE,2); // K = kalman filter gain matrix
 
             double dx_hat = map_beacon.x - state(0);
             double dy_hat = map_beacon.y - state(1);
@@ -360,119 +500,47 @@ double KalmanFilter::handleLidarMeasurement(LidarMeasurement meas, const BeaconM
             z_hat << z_hat_rng, z_hat_ang;
             v = z - z_hat;
             v(1) = wrapAngle(v(1));
-            H << -dx_hat/z_hat_rng,-dy_hat/z_hat_rng,0,0, dy_hat/(z_hat_rng*z_hat_rng),-dx_hat/(z_hat_rng*z_hat_rng),-1,0;
-            R << LIDAR_RANGE_STD*LIDAR_RANGE_STD,0, 0,LIDAR_THETA_STD*LIDAR_THETA_STD;
+            H << -dx_hat/z_hat_rng,-dy_hat/z_hat_rng,0,0,0, 
+                 dy_hat/(z_hat_rng*z_hat_rng),-dx_hat/(z_hat_rng*z_hat_rng),-1,0,0;
+            R << LIDAR_RANGE_STD*LIDAR_RANGE_STD,0, 
+                 0,LIDAR_THETA_STD*LIDAR_THETA_STD;
             S = H*cov*H.transpose() + R;
             K = cov*H.transpose()*S.inverse();
 
             state = state + K*v;
-            state(2) = wrapAngle(state(2));
-            cov = (Matrix4d::Identity() - K*H)*cov;
+            //state(2) = wrapAngle(state(2));
+            cov = (MatrixXd::Identity(NUM_STATE,NUM_STATE) - K*H)*cov;
 
-            double vSq = v.transpose()*S.inverse()*v; // normalised innovation squared
+            double nis = v.transpose()*S.inverse()*v; // normalised innovation squared
+
+            if (withinChiSq1PctThreshold(nis, v.size())) {
+                // valid measurement
+                setState(state);
+                setCovariance(cov);
+            }
         }
 
         // ----------------------------------------------------------------------- //
-        setState(state);
-        setCovariance(cov);
-        return vSq;
+        return nis;
     }
     return 0;
 }
 
-void KalmanFilter::predictionStep(GyroMeasurement gyro, double dt) {
-    if (isInitialised())
-    {
-        VectorXd state = getState();
-        MatrixXd cov = getCovariance();
+VectorXd KalmanFilter::lidarMeasurementModel(VectorXd state, double beaconX, double beaconY){
+    VectorXd z_hat = VectorXd::Zero(2);
 
-        // Implement The Kalman Filter Prediction Step for the system in the  
-        // section below.
-        // HINT: Assume the state vector has the form [PX, PY, PSI, V].
-        // HINT: Use the Gyroscope measurement as an input into the prediction step.
-        // HINT: You can use the constants: ACCEL_STD, GYRO_STD
-        // HINT: use the wrapAngle() function on angular values to always keep angle
-        // values within correct range, otherwise strange angle effects might be seen.
-        // ----------------------------------------------------------------------- //
-        // ENTER YOUR CODE HERE
-        MatrixXd F = Matrix4d(); // F = Jacobian State matrix
-        MatrixXd Q = Matrix4d(); // Q = process noise
-        VectorXd delta_state = Vector4d();
-        double v = state(3);
-        double psi = state(2);
+    double x = state(0);
+    double y = state(1);
+    double psi = state(2);
 
-        delta_state << dt*v*cos(psi), dt*v*sin(psi), dt*gyro.psi_dot, 0;
-        state = state + delta_state;
-        state(2) = wrapAngle(state(2));
+    double dx = beaconX - x;
+    double dy = beaconY - y;
+    double r = sqrt(dx*dx + dy*dy);
+    double theta = wrapAngle(atan2(dy,dx) - psi);
 
-        F << 1,0,-dt*v*sin(psi),dt*cos(psi), 0,1,dt*v*cos(psi),dt*sin(psi), 0,0,1,0, 0,0,0,1;
-        Q << 0,0,0,0, 0,0,0,0, 0,0,dt*dt*GYRO_STD*GYRO_STD,0, 0,0,0,dt*dt*ACCEL_STD*ACCEL_STD;
+    z_hat << r,theta;
 
-        cov = F*cov*F.transpose() + Q;
-        // ----------------------------------------------------------------------- //
-
-        setState(state);
-        setCovariance(cov);
-    }
-    else 
-    {
-        addGyroInitializationMeasurement(gyro);
-    }
-}
-
-double KalmanFilter::handleGPSMeasurement(GPSMeasurement meas) {
-    if(isInitialised())
-    {
-        VectorXd state = getState();
-        MatrixXd cov = getCovariance();
-
-        VectorXd z = Vector2d::Zero();
-        MatrixXd H = MatrixXd(2,4);
-        MatrixXd R = Matrix2d::Zero();
-
-        z << meas.x,meas.y;
-        H << 1,0,0,0,0,1,0,0;
-        R(0,0) = GPS_POS_STD*GPS_POS_STD;
-        R(1,1) = GPS_POS_STD*GPS_POS_STD;
-
-        VectorXd z_hat = H * state;
-        VectorXd v = z - z_hat;
-        MatrixXd S = H * cov * H.transpose() + R;
-        MatrixXd K = cov*H.transpose()*S.inverse();
-
-        state = state + K*v;
-        cov = (Matrix4d::Identity() - K*H) * cov;
-
-        double vSq = v.transpose()*S.inverse()*v;
-
-        setState(state);
-        setCovariance(cov);
-        return vSq;
-    }
-    else
-    {
-        if (isLidarEnabled()) {
-            addGPSInitializationMeasurement(meas);
-        }
-        else
-        {
-            // No complex initialization for gps-only case; just set the position, assume zero velocity and psi, and start the filter
-            VectorXd state = Vector4d::Zero();
-            MatrixXd cov = Matrix4d::Zero();
-
-            state(0) = meas.x;
-            state(1) = meas.y;
-            cov(0,0) = GPS_POS_STD*GPS_POS_STD;
-            cov(1,1) = GPS_POS_STD*GPS_POS_STD;
-            cov(2,2) = INIT_PSI_STD*INIT_PSI_STD;
-            cov(3,3) = INIT_VEL_STD*INIT_VEL_STD;
-
-            setState(state);
-            setCovariance(cov);
-        }
-        return 0;
-    } 
-             
+    return z_hat;
 }
 
 Matrix2d KalmanFilter::getVehicleStatePositionCovariance() {
